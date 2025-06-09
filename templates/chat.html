@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Business Insights Chatbot</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .chat-container { max-width: 800px; margin: auto; padding: 20px; }
+        .chat-message { margin-bottom: 15px; padding: 10px; border-radius: 5px; }
+        .user-message { background-color: #e9ecef; }
+        .bot-message { background-color: #d1e7dd; }
+        .feedback { margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container chat-container">
+        <h1>{{ greeting }}</h1>
+        <nav class="mb-3">
+            <a href="{{ url_for('history') }}" class="btn btn-secondary">View History</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
+        </nav>
+        <div id="chat-pane">
+            <div id="messages" class="mb-3"></div>
+            <div class="input-group">
+                <input type="text" id="user-input" class="form-control" placeholder="Ask about the Federal Budget...">
+                <button onclick="sendMessage()" class="btn btn-primary">Send</button>
+            </div>
+        </div>
+    </div>
+    <script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+            if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+                try {
+                    var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                    var firstSheetName = workbook.SheetNames[0];
+                    var worksheet = workbook.Sheets[firstSheetName];
+                    var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                    var filteredData = jsonData.filter(row => row.some(filledCell));
+                    var headerRowIndex = filteredData.findIndex((row, index) =>
+                      row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                    );
+                    if (headerRowIndex === -1 || headerRowIndex > 25) {
+                      headerRowIndex = 0;
+                    }
+                    var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex));
+                    csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                    return csv;
+                } catch (e) {
+                    console.error(e);
+                    return "";
+                }
+            }
+            return gk_fileData[filename] || "";
+        }
+    </script>
+    <script>
+        async function sendMessage() {
+            const input = document.getElementById("user-input").value;
+            if (!input) return;
+            const messages = document.getElementById("messages");
+            messages.innerHTML += `<div class="chat-message user-message"><b>You:</b> ${input}</div>`;
+            try {
+                const response = await fetch("/ask", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question: input })
+                });
+                const data = await response.json();
+                const messageDiv = document.createElement("div");
+                messageDiv.className = "chat-message bot-message";
+                messageDiv.innerHTML = `<b>Bot:</b> ${data.answer} <button onclick="suggestFollowUps('${data.answer.replace(/'/g, "\\'")}')" class="btn btn-sm btn-info">Suggest Follow-Ups</button>`;
+                addFeedbackButtons(messageDiv, input, data.answer);
+                messages.appendChild(messageDiv);
+                await storeChat(input, data.answer);
+                document.getElementById("user-input").value = "";
+                messages.scrollTop = messages.scrollHeight;
+            } catch (error) {
+                console.error("Error in sendMessage:", error);
+                messages.innerHTML += `<div class="chat-message bot-message"><b>Bot:</b> Error: Unable to process your request.</div>`;
+            }
+        }
+
+        function addFeedbackButtons(div, question, answer) {
+            const feedbackDiv = document.createElement("div");
+            feedbackDiv.className = "feedback";
+            const thumbsUp = document.createElement("button");
+            thumbsUp.textContent = "👍";
+            thumbsUp.className = "btn btn-sm btn-success";
+            thumbsUp.onclick = () => sendFeedback(question, answer, 1);
+            const thumbsDown = document.createElement("button");
+            thumbsDown.textContent = "👎";
+            thumbsDown.className = "btn btn-sm btn-danger";
+            thumbsDown.onclick = () => sendFeedback(question, answer, -1);
+            feedbackDiv.appendChild(thumbsUp);
+            feedbackDiv.appendChild(thumbsDown);
+            div.appendChild(feedbackDiv);
+        }
+
+        async function sendFeedback(question, answer, rating) {
+            try {
+                await fetch("/feedback", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question, answer, rating })
+                });
+            } catch (error) {
+                console.error("Error in sendFeedback:", error);
+            }
+        }
+
+        async function suggestFollowUps(answer) {
+            try {
+                const response = await fetch("/suggest_follow_ups", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ answer })
+                });
+                const data = await response.json();
+                const followUpsDiv = document.createElement("div");
+                followUpsDiv.className = "mt-2";
+                if (data.follow_ups && data.follow_ups.length > 0) {
+                    followUpsDiv.innerHTML = "<b>Follow-Up Questions:</b><br>";
+                    data.follow_ups.forEach(q => {
+                        const btn = document.createElement("button");
+                        btn.textContent = q;
+                        btn.className = "btn btn-sm btn-outline-primary m-1";
+                        btn.onclick = () => {
+                            document.getElementById("user-input").value = q;
+                            sendMessage();
+                        };
+                        followUpsDiv.appendChild(btn);
+                    });
+                } else {
+                    followUpsDiv.innerHTML = "<b>Follow-Up Questions:</b> No follow-up questions available.";
+                }
+                const lastMessage = document.querySelector("#messages .bot-message:last-child");
+                lastMessage.appendChild(followUpsDiv);
+            } catch (error) {
+                console.error("Error in suggestFollowUps:", error);
+                const followUpsDiv = document.createElement("div");
+                followUpsDiv.className = "mt-2";
+                followUpsDiv.innerHTML = "<b>Follow-Up Questions:</b> Error fetching follow-up questions.";
+                const lastMessage = document.querySelector("#messages .bot-message:last-child");
+                lastMessage.appendChild(followUpsDiv);
+            }
+        }
+
+        async function storeChat(question, answer) {
+            try {
+                await fetch("/store_chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ question, answer })
+                });
+            } catch (error) {
+                console.error("Error in storeChat:", error);
+            }
+        }
+    </script>
+</body>
+</html>

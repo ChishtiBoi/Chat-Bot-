@@ -1,0 +1,98 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html>
+<head>
+    <title>Chat History</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>Chat History</h1>
+        <nav class="mb-3">
+            <a href="{{ url_for('chat') }}" class="btn btn-secondary">Back to Chat</a>
+            <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
+        </nav>
+        <div class="mb-3">
+            <input type="date" id="date-filter" class="form-control" onchange="filterByDate()">
+            <button onclick="showStarred()" class="btn btn-primary mt-2">Show Starred</button>
+        </div>
+        <div id="history">
+            {% for chat in chats %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <p><b>{{ chat[4] }}</b>: <b>Q:</b> {{ chat[2] }} <br> <b>A:</b> {{ chat[3] }}
+                    <button onclick="toggleStar({{ chat[0] }})" class="btn btn-sm {{ 'btn-warning' if chat[5] else 'btn-outline-warning' }}">
+                        {{ 'Unstar' if chat[5] else 'Star' }}
+                    </button></p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <script>
+        async function toggleStar(id) {
+            await fetch("/star", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id })
+            });
+            location.reload();
+        }
+
+        function filterByDate() {
+            const date = document.getElementById("date-filter").value;
+            const chats = document.querySelectorAll("#history .card");
+            chats.forEach(chat => {
+                const timestamp = chat.querySelector("p b").textContent.split("T")[0];
+                chat.style.display = date && timestamp !== date ? "none" : "block";
+            });
+        }
+
+        function showStarred() {
+            const chats = document.querySelectorAll("#history .card");
+            chats.forEach(chat => {
+                const isStarred = chat.querySelector(".btn-warning");
+                chat.style.display = isStarred ? "block" : "none";
+            });
+        }
+    </script>
+</body>
+</html>
